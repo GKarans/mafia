@@ -1,0 +1,108 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =====================
+   🌑 GLOBAL STYLES
+   ===================== */
+body {
+  @apply bg-gray-900 text-gray-100 font-sans flex flex-col items-center justify-center min-h-screen;
+  background: radial-gradient(circle at center, #141414, #0a0a0a 80%);
+}
+
+h1, h2, h3 {
+  @apply font-bold tracking-wide;
+  color: #f0db4f;
+}
+
+/* =====================
+   🕹️ BUTTONS
+   ===================== */
+button {
+  @apply px-5 py-2 rounded-lg font-semibold transition-transform duration-150;
+  background: linear-gradient(135deg, #111, #222);
+  border: 1px solid #444;
+  color: #fff;
+}
+
+button:hover {
+  @apply scale-105;
+  background: linear-gradient(135deg, #333, #111);
+}
+
+/* Primary (Host / Confirm) */
+button.primary {
+  background: linear-gradient(135deg, #b30000, #ff1a1a);
+  border: 1px solid #ff4d4d;
+  color: white;
+}
+button.primary:hover {
+  background: linear-gradient(135deg, #e60000, #ff3333);
+}
+
+/* =====================
+   🧍 PLAYER CARDS
+   ===================== */
+.player-table {
+  @apply flex flex-wrap justify-center gap-4 mt-6;
+}
+
+.player {
+  @apply rounded-xl p-4 min-w-[120px] text-center font-semibold text-white shadow-md transition-all;
+  background: linear-gradient(145deg, #1e1e1e, #2b2b2b);
+  border: 1px solid #333;
+}
+.player:hover {
+  @apply scale-105;
+  border-color: #ff3333;
+  background: linear-gradient(145deg, #2a0000, #3b0b0b);
+}
+
+.player.dead {
+  @apply opacity-40 line-through;
+  filter: grayscale(100%);
+}
+
+/* =====================
+   🌗 PHASES
+   ===================== */
+.phase-container {
+  @apply text-center p-8 w-full;
+  font-family: "Inter", sans-serif;
+}
+
+/* NIGHT */
+.night-phase {
+  background: radial-gradient(circle at top, #000000, #090909, #150000);
+  color: #ffefef;
+}
+
+/* DAY */
+.day-phase {
+  background: linear-gradient(135deg, #fefefe, #ddd);
+  color: #111;
+}
+
+/* =====================
+   🧭 PANELS
+   ===================== */
+.phase {
+  @apply border-2 rounded-2xl p-6 mx-auto w-3/4;
+  background: rgba(30, 30, 30, 0.8);
+  border-color: #333;
+}
+
+.host-controls button {
+  @apply bg-blue-700 text-white;
+}
+
+.action-area button {
+  @apply bg-red-700 text-white;
+}
+
+/* =====================
+   ✨ MISC
+   ===================== */
+.selected {
+  background: #007bff !important;
+}
