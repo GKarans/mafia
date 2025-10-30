@@ -45,24 +45,20 @@ export default function NightPhase() {
   useEffect(() => {
     if (!canActNow) return;
 
-    function onMafiaSel(sel) {
+    function onMafiaStatus({ selections, unanimousTargetId }) {
       if (nightRole !== "mafia") return;
-      setSelections(sel || {});
-      const ids = Object.keys(sel || {});
-      const unanimous = ids.length === 1 ? ids[0] : null;
-      setUnanimousTargetId(unanimous);
+      setSelections(selections || {});
+      setUnanimousTargetId(unanimousTargetId || null);
     }
     function onMafiaFinal({ targetId }) {
       if (nightRole !== "mafia") return;
       setUnanimousTargetId(targetId || null);
       setSubmitted(true);
     }
-    function onDetSel(sel) {
+    function onDetStatus({ selections, unanimousTargetId }) {
       if (nightRole !== "detective") return;
-      setSelections(sel || {});
-      const ids = Object.keys(sel || {});
-      const unanimous = ids.length === 1 ? ids[0] : null;
-      setUnanimousTargetId(unanimous);
+      setSelections(selections || {});
+      setUnanimousTargetId(unanimousTargetId || null);
     }
     function onDetFinal({ targetId }) {
       if (nightRole !== "detective") return;
@@ -70,15 +66,15 @@ export default function NightPhase() {
       setSubmitted(true);
     }
 
-    socket.on("mafia:selections", onMafiaSel);
+    socket.on("mafia:status", onMafiaStatus);
     socket.on("mafia:final", onMafiaFinal);
-    socket.on("detective:selections", onDetSel);
+    socket.on("detective:status", onDetStatus);
     socket.on("detective:final", onDetFinal);
 
     return () => {
-      socket.off("mafia:selections", onMafiaSel);
+      socket.off("mafia:status", onMafiaStatus);
       socket.off("mafia:final", onMafiaFinal);
-      socket.off("detective:selections", onDetSel);
+      socket.off("detective:status", onDetStatus);
       socket.off("detective:final", onDetFinal);
     };
   }, [canActNow, nightRole]);
@@ -129,10 +125,17 @@ export default function NightPhase() {
   const targetIsSelf = (t) => t?.name === playerName;
 
   const consensusColor = (id) => {
+    // Doctor: single actor — highlight selected as green
+    if (nightRole === "doctor") {
+      return picked === id
+        ? "bg-green-700"
+        : "bg-slate-700 hover:bg-slate-600 active:bg-slate-600";
+    }
+    // Mafia/Detective:
+    // - GREEN only when server says unanimous for this id
     if (unanimousTargetId && id === unanimousTargetId) return "bg-green-700";
-    const pickedIds = Object.keys(selections || {});
-    if (pickedIds.length > 1 && pickedIds.includes(String(id))) return "bg-red-700";
-    if (!unanimousTargetId && selections[id] > 0) return "bg-indigo-700";
+    // - Otherwise, any currently selected targets (even if single) are RED
+    if (selections && selections[id] > 0) return "bg-red-700";
     return "bg-slate-700 hover:bg-slate-600 active:bg-slate-600";
   };
 

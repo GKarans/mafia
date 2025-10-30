@@ -197,7 +197,19 @@ io.on("connection", (socket) => {
     }
     ns.mafiaSelections = tally;
 
-    for (const p of mafiaAlive) io.to(p.id).emit("mafia:selections", ns.mafiaSelections);
+    // Unanimity: all alive mafias have voted AND chose the same target
+    const votes = mafiaAlive.map(m => ns.mafiaVotes[m.id]).filter(Boolean);
+    let unanimousTargetId = null;
+    if (votes.length === mafiaAlive.length && votes.length > 0) {
+      const first = votes[0];
+      if (votes.every(v => v === first)) unanimousTargetId = first;
+    }
+
+    const payload = { selections: ns.mafiaSelections, unanimousTargetId };
+    for (const p of mafiaAlive) {
+      io.to(p.id).emit("mafia:status", payload);
+      io.to(p.id).emit("mafia:selections", ns.mafiaSelections); // legacy (safe to keep)
+    }
   });
 
   socket.on("mafia:finalize", ({ targetId }) => {
@@ -242,7 +254,19 @@ io.on("connection", (socket) => {
     }
     ns.detectiveSelections = tally;
 
-    for (const d of detAlive) io.to(d.id).emit("detective:selections", ns.detectiveSelections);
+    // Unanimity: all alive detectives have voted AND chose the same target
+    const votes = detAlive.map(d => ns.detectiveVotes[d.id]).filter(Boolean);
+    let unanimousTargetId = null;
+    if (votes.length === detAlive.length && votes.length > 0) {
+      const first = votes[0];
+      if (votes.every(v => v === first)) unanimousTargetId = first;
+    }
+
+    const payload = { selections: ns.detectiveSelections, unanimousTargetId };
+    for (const d of detAlive) {
+      io.to(d.id).emit("detective:status", payload);
+      io.to(d.id).emit("detective:selections", ns.detectiveSelections); // legacy (safe to keep)
+    }
   });
 
   socket.on("detective:finalize", ({ targetId }) => {
@@ -438,7 +462,7 @@ async function runNightSequence(game, io) {
   const lastNightDeaths = summary.lastNightDeathsResolved || [];
   const lastNightSaved = !!summary.protected; // protected = saved player name or null
   const lastNightSavedName = summary.protected || null;
-  const detectiveMissed = false; // keep false unless your resolver returns a flag
+  const detectiveMissed = false;
 
   io.to(game.room).emit("state:update", {
     players: publicList,
