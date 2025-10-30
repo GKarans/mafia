@@ -24,7 +24,7 @@ export default function DayPhase() {
         ☀️ Day Phase
       </motion.h2>
 
-      {/* Night results: either deaths (with roles) or a doctor save banner */}
+      {/* Night results */}
       {lastNightSaved && (
         <div className="bg-green-900/50 border border-green-700 rounded-2xl p-3">
           <p className="text-sm">
