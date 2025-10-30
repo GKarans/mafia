@@ -8,7 +8,7 @@ const initialState = {
     mafiaSelections: {},
     mafiaFinalTarget: null,
     detectivePeek: null,
-    detectiveRevealWindow: null, // { targetId, isMafia, ms, ts }
+    detectiveRevealWindow: null,
   },
   nightTurn: null,
   nightRole: null,      // "mafia" | "detective" | "doctor" | null (private per-socket)
@@ -17,14 +17,17 @@ const initialState = {
 
   lastNightDeaths: [],   // [{ id, name, role }]
   lastNightSaved: false, // boolean — doctor saved the mafia target
-  lastLynch: null,       // { id, name, role } when lynched by day
+  lastLynch: null,       // { id, name, role }
   dayResolved: false,
-  detectiveMissed: false,  // banner: detective shot wrong target during day
-  detectiveShot: null,     // { id, name, role } when detective kills mafia during day
+  detectiveMissed: false,
+  detectiveShot: null,
   rolesLocked: false,
 
   roomId: null,
   playerName: "",
+  myId: null,
+  isHost: false,
+
   players: [],
   role: null,
   phase: "LOBBY",
@@ -35,40 +38,40 @@ const initialState = {
 
 function gameReducer(state, action) {
   switch (action.type) {
-    case "SET_PLAYER": return { ...state, playerName: action.payload };
-    case "SET_PLAYERS": return { ...state, players: action.payload };
+    case "SET_PLAYER": return { ...state, playerName: action.payload.name, myId: action.payload.id };
+    case "SET_PLAYERS": {
+      const players = action.payload || [];
+      const isHost = state.myId && players.length > 0 && players[0]?.id === state.myId;
+      return { ...state, players, isHost };
+    }
     case "SET_ROLE": return { ...state, role: action.payload };
     case "SET_PHASE": {
-  const next = { ...state, phase: action.payload };
-  if (action.payload === "LOBBY" || action.payload === "NIGHT") {
-    next.doctorSelfUsed = false; // ✅ reset per new game
-    // also clear per-night detective UI
-    next.night = { mafiaSelections: {}, mafiaFinalTarget: null, detectivePeek: null, detectiveRevealWindow: null };
-    next.nightTurn = null;
-    next.lastNightDeaths = [];
-    next.lastNightSaved = false;
-    next.lastLynch = null;
-    next.dayResolved = false;
-  }
-  return next;
-}
+      const next = { ...state, phase: action.payload };
+      if (action.payload === "LOBBY" || action.payload === "NIGHT") {
+        next.doctorSelfUsed = false; // reset per new game/night
+        next.night = { mafiaSelections: {}, mafiaFinalTarget: null, detectivePeek: null, detectiveRevealWindow: null };
+        next.nightTurn = null;
+        next.lastNightDeaths = [];
+        next.lastNightSaved = false;
+        next.lastLynch = null;
+        next.dayResolved = false;
+      }
+      return next;
+    }
     case "SET_ROOM": return { ...state, roomId: action.payload };
     case "SET_RESULT": return { ...state, result: action.payload };
     case "CONNECTED": return { ...state, connected: true };
     case "ERROR": return { ...state, error: action.payload };
     case "RESET": return { ...initialState };
 
-    // Generic merge from server (players, nightTurn, dayResolved, lastNightDeaths, lastNightSaved, etc.)
-    case "SOCKET_STATE":
-      return { ...state, ...action.payload };
+    // Generic merge from server
+    case "SOCKET_STATE": return { ...state, ...action.payload };
 
     // Night-specific
     case "MAFIA_SELECTIONS":
       return { ...state, night: { ...state.night, mafiaSelections: action.payload } };
     case "MAFIA_FINAL":
       return { ...state, night: { ...state.night, mafiaFinalTarget: action.payload } };
-    case "DETECTIVE_PEEK":
-      return { ...state, night: { ...state.night, detectivePeek: action.payload } };
     case "DETECTIVE_REVEAL":
       return { ...state, night: { ...state.night, detectiveRevealWindow: action.payload } };
     case "DOCTOR_SELF_USED":
@@ -88,7 +91,7 @@ export const GameProvider = ({ children }) => {
   useEffect(() => {
     if (!socket) return;
 
-    // Bind sounds ONCE (avoid StrictMode double-effect)
+    // Bind sounds ONCE
     if (!soundsBoundRef.current) {
       bindSocketSounds(socket);
       soundsBoundRef.current = true;
@@ -102,43 +105,33 @@ export const GameProvider = ({ children }) => {
     // Lobby / base
     socket.on("joinedRoom", ({ roomId, player }) => {
       dispatch({ type: "SET_ROOM", payload: roomId });
-      dispatch({ type: "SET_PLAYER", payload: player.name });
+      dispatch({ type: "SET_PLAYER", payload: { id: player.id, name: player.name } });
     });
     socket.on("playerList", (players) => dispatch({ type: "SET_PLAYERS", payload: players }));
     socket.on("roleAssigned", ({ role }) => dispatch({ type: "SET_ROLE", payload: role }));
 
-    // Phase changes: clear any private night UI so everyone starts "asleep"
+    // Phase changes: clear private night UI
     socket.on("phaseChange", ({ phase }) => {
       dispatch({ type: "SET_PHASE", payload: phase });
       if (phase === "NIGHT" || phase === "DAY" || phase === "END") {
-        dispatch({
-          type: "SOCKET_STATE",
-          payload: { nightRole: null, nightTargets: [] }
-        });
+        dispatch({ type: "SOCKET_STATE", payload: { nightRole: null, nightTargets: [] } });
       }
     });
 
     // Game end
     socket.on("gameOver", ({ result, reveal }) => {
       dispatch({ type: "SET_RESULT", payload: result });
-      // also lock in final revealed players (with roles) for ResultScreen
       dispatch({ type: "SOCKET_STATE", payload: { players: reveal } });
     });
 
     // Night + Day updates (server state)
     socket.on("state:update", (payload) => dispatch({ type: "SOCKET_STATE", payload }));
 
-    // Mafia-only live tally and final
+    // Mafia live tally and final
     socket.on("mafia:selections", (map) => dispatch({ type: "MAFIA_SELECTIONS", payload: map }));
     socket.on("mafia:final", ({ targetId }) => dispatch({ type: "MAFIA_FINAL", payload: targetId }));
 
-    // Detective private peek & timed reveal modal
-    socket.on("detective:result", ({ targetId, isMafia }) =>
-      dispatch({ type: "DETECTIVE_PEEK", payload: { targetId, isMafia } })
-    );
-    socket.on("detective:revealWindow", (payload) =>
-      dispatch({ type: "DETECTIVE_REVEAL", payload })
-    );
+    // Detectives consensus — handled directly in NightPhase via socket listeners
 
     // Doctor self-save one-time notification
     socket.on("doctor:selfUsed", () => dispatch({ type: "DOCTOR_SELF_USED" }));
@@ -154,7 +147,7 @@ export const GameProvider = ({ children }) => {
       dispatch({ type: "SOCKET_STATE", payload: { nightRole: "doctor", nightTargets: targets } })
     );
 
-    // NEW: clear role panel immediately after that role's turn ends
+    // Clear a role panel immediately after that role's turn ends
     socket.on("night:clear", () =>
       dispatch({ type: "SOCKET_STATE", payload: { nightRole: null, nightTargets: [] } })
     );
@@ -162,7 +155,6 @@ export const GameProvider = ({ children }) => {
     // Voting helpers
     socket.on("voting:update", (payload) => dispatch({ type: "SOCKET_STATE", payload }));
     socket.on("day:resolved", (payload) => dispatch({ type: "SOCKET_STATE", payload }));
-
 
     return () => {
       socket.off("connect");
@@ -178,8 +170,6 @@ export const GameProvider = ({ children }) => {
       socket.off("state:update");
       socket.off("mafia:selections");
       socket.off("mafia:final");
-      socket.off("detective:result");
-      socket.off("detective:revealWindow");
       socket.off("doctor:selfUsed");
 
       socket.off("night:mafia");
@@ -207,8 +197,8 @@ export const GameProvider = ({ children }) => {
     // Night actions
     mafiaPropose: (targetId) => socket.emit("mafia:propose", { targetId }),
     mafiaFinalize: (targetId) => socket.emit("mafia:finalize", { targetId }),
-    detectiveCheck: (targetId) => socket.emit("detective:check", { targetId }),
-    detectiveConfirm: () => socket.emit("detective:confirm"),
+    detectivePropose: (targetId) => socket.emit("detective:propose", { targetId }),
+    detectiveFinalize: (targetId) => socket.emit("detective:finalize", { targetId }),
     doctorSave: (targetId) => socket.emit("doctor:save", { targetId }),
     doctorConfirm: () => socket.emit("doctor:confirm"),
 

@@ -6,7 +6,13 @@ import VotePhase from "./VotePhase.jsx";
 
 export default function DayPhase() {
   const { state, actions } = useGame();
-  const { dayResolved, lastNightDeaths = [], lastNightSaved = false, lastLynch = null } = state;
+  const {
+    dayResolved,
+    lastNightDeaths = [],
+    lastNightSaved = false,
+    lastLynch = null,
+    isHost = false,
+  } = state;
 
   return (
     <div className="p-4 space-y-4 w-full max-w-xl mx-auto">
@@ -20,17 +26,12 @@ export default function DayPhase() {
 
       {/* Night results: either deaths (with roles) or a doctor save banner */}
       {lastNightSaved && (
-  <div className="bg-green-900/50 border border-green-700 rounded-2xl p-3">
-    <p className="text-sm">🩺 <span className="font-semibold">Doctor saved someone's life.</span></p>
-  </div>
-)}
-{/* 
-{state.detectiveMissed && (
-  <div className="bg-yellow-900/50 border border-yellow-700 rounded-2xl p-3">
-    <p className="text-sm">🔫 <span className="font-semibold">Detectiv didnt shoot mafia3333.</span></p>
-  </div>
-)} */}
-
+        <div className="bg-green-900/50 border border-green-700 rounded-2xl p-3">
+          <p className="text-sm">
+            🩺 <span className="font-semibold">Doctor saved someone's life.</span>
+          </p>
+        </div>
+      )}
 
       {(
         <div className="bg-green-900/50 border border-green-700 rounded-2xl p-3">
@@ -75,22 +76,24 @@ export default function DayPhase() {
         </div>
       )}
 
-            <VotePhase noTimer />
+      <VotePhase noTimer />
 
-      <div className="pt-1">
-        <button
-          onClick={() => actions.startNight()}
-          disabled={!dayResolved}
-          className={`w-full mt-2 px-4 py-3 rounded-2xl text-base ${
-            dayResolved
-              ? "bg-indigo-700 hover:bg-indigo-600 active:bg-indigo-700"
-              : "bg-slate-700 opacity-50 cursor-not-allowed"
-          }`}
-          title={dayResolved ? "Start night" : "Wait until the day is resolved"}
-        >
-          Start Night
-        </button>
-      </div>
+      {isHost && (
+        <div className="pt-1">
+          <button
+            onClick={() => actions.startNight()}
+            disabled={!dayResolved}
+            className={`w-full mt-2 px-4 py-3 rounded-2xl text-base ${
+              dayResolved
+                ? "bg-indigo-700 hover:bg-indigo-600 active:bg-indigo-700"
+                : "bg-slate-700 opacity-50 cursor-not-allowed"
+            }`}
+            title={dayResolved ? "Start night" : "Wait until the day is resolved"}
+          >
+            Start Night
+          </button>
+        </div>
+      )}
     </div>
   );
 }

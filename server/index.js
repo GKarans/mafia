@@ -43,14 +43,17 @@ io.on("connection", (socket) => {
       games.set(game.id, game);
 
       game.nightState = {
-        mafiaVotes: {},
-        mafiaSelections: {},
+        mafiaVotes: {},              // mafiaId -> targetId
+        mafiaSelections: {},         // targetId -> count
         mafiaFinalTarget: null,
-        detectiveTarget: null,
-        detectiveConfirmed: false,
+
+        detectiveVotes: {},          // detectiveId -> targetId
+        detectiveSelections: {},     // targetId -> count
+        detectiveFinalTarget: null,
+
         doctorTarget: null,
         doctorConfirmed: false,
-        doctorSelfUsed: new Set(),
+        doctorSelfUsed: new Set(),   // doctor ids who already self-saved
       };
 
       if (config.hostName) game.addPlayer(socket, config.hostName);
@@ -102,46 +105,48 @@ io.on("connection", (socket) => {
     await runNightSequence(game, io);
   });
 
-  // --- Manual: Start Night (no timers) ---
-socket.on("phase:startNight", async () => {
-  const game = getGameBySocket(socket);
-  if (!game) return;
-  console.log(`🌙 Manual: Starting night phase for ${game.id}`);
-  await runNightSequence(game, io);
-});
+  // --- Manual: Start Night (host-only, no timers) ---
+  socket.on("phase:startNight", async () => {
+    const game = getGameBySocket(socket);
+    if (!game) return;
+    const hostId = Array.from(game.players.keys())[0];
+    if (socket.id !== hostId) return socket.emit("error", "Only the host can start the night");
+    console.log(`🌙 Manual: Starting night phase for ${game.id}`);
+    await runNightSequence(game, io);
+  });
 
-socket.on("phase:endDay", () => {});
+  socket.on("phase:endDay", () => {});
 
-// ===== DAY VOTING =====
-socket.on("vote", (targetId) => {
-  const game = getGameBySocket(socket);
-  if (!game) return;
+  // ===== DAY VOTING =====
+  socket.on("vote", (targetId) => {
+    const game = getGameBySocket(socket);
+    if (!game) return;
 
-  const voter = game.players.get(socket.id);
-  if (!voter) return;
+    const voter = game.players.get(socket.id);
+    if (!voter) return;
 
-  // Voting eligibility
-  if (!game.canPlayerVoteNow(voter)) return;
+    // Voting eligibility
+    if (!game.canPlayerVoteNow(voter)) return;
 
-  // Record (null => abstain)
-  game.votes[socket.id] = targetId ?? null;
-  io.to(game.room).emit("voting:update", { votes: game.votes });
+    // Record (null => abstain)
+    game.votes[socket.id] = targetId ?? null;
+    io.to(game.room).emit("voting:update", { votes: game.votes });
 
-  // --- 70% live threshold ---
-  const aliveIds = [...game.players.values()].filter(p => p.alive).map(p => p.id);
+    // --- 2/3 live threshold ---
+    const aliveIds = [...game.players.values()].filter(p => p.alive).map(p => p.id);
 
-  const tally = {};
-  for (const id of aliveIds) {
-    const choice = game.votes[id];
-    if (choice) tally[choice] = (tally[choice] || 0) + 1;
-  }
+    const tally = {};
+    for (const id of aliveIds) {
+      const choice = game.votes[id];
+      if (choice) tally[choice] = (tally[choice] || 0) + 1;
+    }
 
     let topTarget = null, topCount = 0;
     for (const [tid, count] of Object.entries(tally)) {
       if (count > topCount) { topCount = count; topTarget = tid; }
     }
 
-    const needed = Math.ceil(aliveIds.length * 0.7);
+    const needed = Math.ceil((2 * aliveIds.length) / 3);
     let lastLynch = null;
 
     if (topTarget && topCount >= needed) {
@@ -173,7 +178,7 @@ socket.on("vote", (targetId) => {
 
   // ===== NIGHT ACTION SOCKETS =====
 
-  // Mafia select (each mafia picks; we tally)
+  // ---- MAFIA consensus (propose/finalize) ----
   socket.on("mafia:propose", ({ targetId }) => {
     const game = getGameBySocket(socket);
     if (!game) return;
@@ -195,7 +200,6 @@ socket.on("vote", (targetId) => {
     for (const p of mafiaAlive) io.to(p.id).emit("mafia:selections", ns.mafiaSelections);
   });
 
-  // Mafia finalize
   socket.on("mafia:finalize", ({ targetId }) => {
     const game = getGameBySocket(socket);
     if (!game) return;
@@ -219,39 +223,52 @@ socket.on("vote", (targetId) => {
     for (const p of mafiaAlive) io.to(p.id).emit("mafia:final", { targetId });
   });
 
-  // Detective check => immediate private result
-    // Detective choose target to shoot (result revealed at day)
-  socket.on("detective:check", ({ targetId }) => {
+  // ---- DETECTIVE consensus (propose/finalize) ----
+  socket.on("detective:propose", ({ targetId }) => {
     const game = getGameBySocket(socket);
     if (!game) return;
     const me = getPlayerBySocket(game, socket.id);
     if (!me || me.role !== "detective" || !me.alive) return;
-    game.nightState.detectiveTarget = targetId;
+
+    const ns = game.nightState;
+    ns.detectiveVotes[me.id] = targetId;
+
+    const detAlive = [...game.players.values()].filter((p) => p.role === "detective" && p.alive);
+    const aliveIdSet = new Set(detAlive.map((p) => p.id));
+    const tally = {};
+    for (const [did, tid] of Object.entries(ns.detectiveVotes)) {
+      if (!aliveIdSet.has(did) || !tid) continue;
+      tally[tid] = (tally[tid] || 0) + 1;
+    }
+    ns.detectiveSelections = tally;
+
+    for (const d of detAlive) io.to(d.id).emit("detective:selections", ns.detectiveSelections);
   });
 
-  // Detective confirm => 5s reveal
-  socket.on("detective:confirm", () => {
+  socket.on("detective:finalize", ({ targetId }) => {
     const game = getGameBySocket(socket);
     if (!game) return;
     const me = getPlayerBySocket(game, socket.id);
     if (!me || me.role !== "detective" || !me.alive) return;
-    if (!game.nightState) return;
 
-    const targetId = game.nightState.detectiveTarget;
-    const target = targetId ? game.players.get(targetId) : null;
-    const isMafia = !!target && target.role === "mafia";
+    const ns = game.nightState;
+    const detAlive = [...game.players.values()].filter((p) => p.role === "detective" && p.alive);
+    if (detAlive.length === 0) return;
 
-    game.nightState.detectiveConfirmed = true;
+    if (detAlive.length === 1) {
+      ns.detectiveFinalTarget = targetId;
+      console.log(`🕵️ Detective (single) finalized target: ${targetId}`);
+    } else {
+      const allAgree = detAlive.every((d) => ns.detectiveVotes[d.id] === targetId);
+      if (!allAgree) return;
+      ns.detectiveFinalTarget = targetId;
+      console.log(`🕵️ Detectives (group) finalized target: ${targetId}`);
+    }
 
-    io.to(me.id).emit("detective:revealWindow", {
-      targetId,
-      isMafia,
-      ms: 5000,
-      ts: Date.now(),
-    });
+    for (const d of detAlive) io.to(d.id).emit("detective:final", { targetId });
   });
 
-  // Doctor save (enforce one self-save per doctor total)
+  // ---- DOCTOR: self-save limited to once per doctor ----
   socket.on("doctor:save", ({ targetId }) => {
     const game = getGameBySocket(socket);
     if (!game) return;
@@ -260,13 +277,12 @@ socket.on("vote", (targetId) => {
 
     const ns = game.nightState;
 
-    // === SECOND SELF-SAVE → deny & auto-advance ===
+    // SECOND SELF-SAVE → deny & auto-advance
     if (targetId === me.id && ns.doctorSelfUsed.has(me.id)) {
       io.to(me.id).emit("doctor:selfDenied");
-      // auto-advance this phase even if the player doesn't press Confirm again
-      ns.doctorTarget = null;          // explicit no-target
-      ns.doctorConfirmed = true;       // mark done
-      io.to(me.id).emit("night:clear"); // optional immediate UI clear for that doctor
+      ns.doctorTarget = null;     // explicit no-target
+      ns.doctorConfirmed = true;  // mark done
+      io.to(me.id).emit("night:clear");
       return;
     }
 
@@ -276,11 +292,9 @@ socket.on("vote", (targetId) => {
       io.to(me.id).emit("doctor:selfUsed");
     }
 
-    // Accept any other valid target (including null from Skip path)
     ns.doctorTarget = targetId ?? null;
   });
 
-  // Doctor confirm (kept — harmless if already auto-confirmed)
   socket.on("doctor:confirm", () => {
     const game = getGameBySocket(socket);
     if (!game) return;
@@ -318,8 +332,11 @@ async function runNightSequence(game, io) {
     mafiaVotes: {},
     mafiaSelections: {},
     mafiaFinalTarget: null,
-    detectiveTarget: null,
-    detectiveConfirmed: false,
+
+    detectiveVotes: {},
+    detectiveSelections: {},
+    detectiveFinalTarget: null,
+
     doctorTarget: null,
     doctorConfirmed: false,
   });
@@ -331,7 +348,12 @@ async function runNightSequence(game, io) {
 
   // "asleep" baseline
   io.to(game.room).emit("state:update", {
-    night: { mafiaSelections: {}, mafiaFinalTarget: null, detectivePeek: null, detectiveRevealWindow: null },
+    night: {
+      mafiaSelections: {},
+      mafiaFinalTarget: null,
+      detectivePeek: null,
+      detectiveRevealWindow: null,
+    },
     nightTurn: null,
   });
 
@@ -347,7 +369,9 @@ async function runNightSequence(game, io) {
     const mafiaAlive = [...game.players.values()].filter(p => p.role === "mafia" && p.alive);
     if (mafiaAlive.length) {
       emitNightTurn(game, "mafia");
-      const targets = [...game.players.values()].filter(p => p.alive && p.role !== "mafia").map(p => ({ id: p.id, name: p.name }));
+      const targets = [...game.players.values()]
+        .filter(p => p.alive && p.role !== "mafia")
+        .map(p => ({ id: p.id, name: p.name }));
       for (const m of mafiaAlive) io.to(m.id).emit("night:mafia", { targets });
       io.to(game.room).emit("playSound", { file: "mafia_atver.mp3", loop: false, volume: 1.0 });
 
@@ -361,25 +385,26 @@ async function runNightSequence(game, io) {
       emitNightTurn(game, null);
     }
   }
+
   // --- DETECTIVE ---
-const detectiveAlive = [...game.players.values()].filter(p => p.role === "detective" && p.alive);
-if (detectiveAlive.length && !game.checkWinCondition()) {
-  emitNightTurn(game, "detective");
-  for (const d of detectiveAlive) {
-    const targets = [...game.players.values()]
-      .filter(t => t.alive && t.id !== d.id)
-      .map(t => ({ id: t.id, name: t.name }));
-    io.to(d.id).emit("night:detective", { targets });
+  const detectiveAlive = [...game.players.values()].filter(p => p.role === "detective" && p.alive);
+  if (detectiveAlive.length && !game.checkWinCondition()) {
+    emitNightTurn(game, "detective");
+    for (const d of detectiveAlive) {
+      const targets = [...game.players.values()]
+        .filter(t => t.alive && t.id !== d.id)
+        .map(t => ({ id: t.id, name: t.name }));
+      io.to(d.id).emit("night:detective", { targets });
+    }
+    io.to(game.room).emit("playSound", { file: "policija_atver.mp3", loop: false, volume: 1.0 });
+
+    await waitFor(() => !!game.nightState.detectiveFinalTarget);
+
+    for (const d of detectiveAlive) io.to(d.id).emit("night:clear");
+    io.to(game.room).emit("playSound", { file: "policija_aizver.mp3", loop: false, volume: 1.0 });
+    emitNightTurn(game, null);
+    await sleep(3000);
   }
-  io.to(game.room).emit("playSound", { file: "policija_atver.mp3", loop: false, volume: 1.0 });
-
-  await waitFor(() => !!game.nightState.detectiveTarget);
-
-  for (const d of detectiveAlive) io.to(d.id).emit("night:clear");
-  io.to(game.room).emit("playSound", { file: "policija_aizver.mp3", loop: false, volume: 1.0 });
-  emitNightTurn(game, null);
-  await sleep(3000);
-}
 
   // --- DOCTOR ---
   const doctorAlive = [...game.players.values()].filter(p => p.role === "doctor" && p.alive);
@@ -404,16 +429,16 @@ if (detectiveAlive.length && !game.checkWinCondition()) {
   // RESOLVE
   const actions = {
     mafiaTarget: game.nightState.mafiaFinalTarget,
-    detectiveTarget: game.nightState.detectiveTarget,
+    detectiveTarget: game.nightState.detectiveFinalTarget,
     doctorTarget: game.nightState.doctorTarget,
   };
   const summary = game.resolveNight(actions);
 
   const publicList = game.getPublicPlayers();
   const lastNightDeaths = summary.lastNightDeathsResolved || [];
-  const lastNightSaved = !!summary.protectedFromMafiaKill;
-  const detectiveMissed = !!summary.detectiveMissed;
-  const lastNightSavedName = summary.protectedFromMafiaKill ? (summary.protectedName || null) : null;
+  const lastNightSaved = !!summary.protected; // protected = saved player name or null
+  const lastNightSavedName = summary.protected || null;
+  const detectiveMissed = false; // keep false unless your resolver returns a flag
 
   io.to(game.room).emit("state:update", {
     players: publicList,

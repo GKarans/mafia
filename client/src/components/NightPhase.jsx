@@ -2,11 +2,12 @@
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import { useGame } from "../context/GameContext.jsx";
 import { motion, AnimatePresence } from "framer-motion";
+import { socket } from "../index.jsx";
 
 export default function NightPhase() {
   const { state, actions } = useGame();
   const {
-    nightRole,             // "mafia" | "detective" | "doctor" | null (private to me)
+    nightRole,             // "mafia" | "detective" | "doctor" | null
     nightTargets = [],     // [{ id, name }] — private to me this night
     nightTurn,             // which role's turn it is globally
     doctorSelfUsed = false,
@@ -18,12 +19,16 @@ export default function NightPhase() {
   const [picked, setPicked] = useState(null);
   const [submitted, setSubmitted] = useState(false);
   const [selfDenied, setSelfDenied] = useState(false);
+  const [selections, setSelections] = useState({});   // targetId -> count
+  const [unanimousTargetId, setUnanimousTargetId] = useState(null);
 
   // Reset local state each new turn
   useEffect(() => {
     setPicked(null);
     setSubmitted(false);
     setSelfDenied(false);
+    setSelections({});
+    setUnanimousTargetId(null);
   }, [nightRole, nightTurn]);
 
   const itIsMyTurn = useMemo(() => {
@@ -36,22 +41,69 @@ export default function NightPhase() {
     nightRole === "mafia" || nightRole === "detective" || nightRole === "doctor";
   const canActNow = canActRole && itIsMyTurn;
 
+  // ===== Consensus listeners (Mafia & Detective) =====
+  useEffect(() => {
+    if (!canActNow) return;
+
+    function onMafiaSel(sel) {
+      if (nightRole !== "mafia") return;
+      setSelections(sel || {});
+      const ids = Object.keys(sel || {});
+      const unanimous = ids.length === 1 ? ids[0] : null;
+      setUnanimousTargetId(unanimous);
+    }
+    function onMafiaFinal({ targetId }) {
+      if (nightRole !== "mafia") return;
+      setUnanimousTargetId(targetId || null);
+      setSubmitted(true);
+    }
+    function onDetSel(sel) {
+      if (nightRole !== "detective") return;
+      setSelections(sel || {});
+      const ids = Object.keys(sel || {});
+      const unanimous = ids.length === 1 ? ids[0] : null;
+      setUnanimousTargetId(unanimous);
+    }
+    function onDetFinal({ targetId }) {
+      if (nightRole !== "detective") return;
+      setUnanimousTargetId(targetId || null);
+      setSubmitted(true);
+    }
+
+    socket.on("mafia:selections", onMafiaSel);
+    socket.on("mafia:final", onMafiaFinal);
+    socket.on("detective:selections", onDetSel);
+    socket.on("detective:final", onDetFinal);
+
+    return () => {
+      socket.off("mafia:selections", onMafiaSel);
+      socket.off("mafia:final", onMafiaFinal);
+      socket.off("detective:selections", onDetSel);
+      socket.off("detective:final", onDetFinal);
+    };
+  }, [canActNow, nightRole]);
+
+  // Emit propose on pick for mafia/detective
+  const pickAndPropose = (id) => {
+    setPicked(id);
+    if (nightRole === "mafia") actions.mafiaPropose(id);
+    if (nightRole === "detective") actions.detectivePropose(id);
+  };
+
   // ===== Submit handler (Confirm) =====
   const submit = () => {
     if (!canActNow || submitted) return;
 
     if (nightRole === "mafia") {
-      if (!picked) return;
-      actions.mafiaFinalize(picked);
+      if (!unanimousTargetId) return;
+      actions.mafiaFinalize(unanimousTargetId);
       setSubmitted(true);
       return;
     }
 
     if (nightRole === "detective") {
-      // Detective must choose a target; we only send the target (no confirm window),
-      // server reveals results at day.
-      if (!picked) return;
-      actions.detectiveCheck(picked);
+      if (!unanimousTargetId) return;
+      actions.detectiveFinalize(unanimousTargetId);
       setSubmitted(true);
       return;
     }
@@ -76,20 +128,24 @@ export default function NightPhase() {
 
   const targetIsSelf = (t) => t?.name === playerName;
 
+  const consensusColor = (id) => {
+    if (unanimousTargetId && id === unanimousTargetId) return "bg-green-700";
+    const pickedIds = Object.keys(selections || {});
+    if (pickedIds.length > 1 && pickedIds.includes(String(id))) return "bg-red-700";
+    if (!unanimousTargetId && selections[id] > 0) return "bg-indigo-700";
+    return "bg-slate-700 hover:bg-slate-600 active:bg-slate-600";
+  };
+
   const btnClass = (id, disabled) =>
     `px-4 py-3 rounded-2xl text-left text-base transition ${
-      disabled
-        ? "bg-slate-700/50 cursor-not-allowed opacity-60"
-        : picked === id
-        ? "bg-indigo-700"
-        : "bg-slate-700 hover:bg-slate-600 active:bg-slate-600"
+      disabled ? "bg-slate-700/50 cursor-not-allowed opacity-60" : consensusColor(id)
     }`;
 
   // Instruction line depends on role
   const instruction = (() => {
-    if (nightRole === "mafia") return "Choose a target to eliminate, then confirm.";
+    if (nightRole === "mafia") return "Choose a target to eliminate. All Mafias must agree.";
     if (nightRole === "detective")
-      return "Choose a player to shoot (only mafia can be killed), then confirm.";
+      return "Choose a player to shoot (only mafia will die). All Detectives must agree.";
     if (nightRole === "doctor") return "Choose a player to protect, then confirm.";
     return "";
   })();
@@ -101,7 +157,6 @@ export default function NightPhase() {
   const timerRef = useRef(null);
   const tickRef = useRef(null);
 
-  // Keep this logic so the UI won’t break if server ever emits reveal windows.
   useEffect(() => {
     if (!reveal) {
       setRevealOpen(false);
@@ -160,7 +215,10 @@ export default function NightPhase() {
                   key={t.id}
                   className={btnClass(t.id, disabled)}
                   disabled={disabled}
-                  onClick={() => !disabled && setPicked(t.id)}
+                  onClick={() =>
+                    !disabled &&
+                    (nightRole === "doctor" ? setPicked(t.id) : pickAndPropose(t.id))
+                  }
                 >
                   <span className="font-semibold">{t.name}</span>
                   {targetIsSelf(t) && (
@@ -184,8 +242,8 @@ export default function NightPhase() {
           <button
             className={`w-full mt-3 px-4 py-3 rounded-2xl text-base ${
               submitted ||
-              (nightRole === "mafia" && !picked) ||
-              (nightRole === "detective" && !picked) ||
+              (nightRole === "mafia" && !unanimousTargetId) ||
+              (nightRole === "detective" && !unanimousTargetId) ||
               (nightRole === "doctor" &&
                 doctorSelfUsed &&
                 (() => {

@@ -1,98 +1,65 @@
 // server/game/roles.js
 
 /**
- * 🎭 Mafia Game Role Definitions
- * Each role includes alignment, description, and ability metadata.
+ * Recommended role distribution by player count:
+ * 4–8:  mafia=1, detective=1, doctor=1
+ * 9–11: mafia=2, detective=2, doctor=1
+ * 12–16: mafia=3, detective=2, doctor=1
+ * 17+:  mafia=4, detective=3, doctor=1
  */
-export const ROLE_INFO = Object.freeze({
-  mafia: {
-    alignment: "evil",
-    description: "Works with other mafia to eliminate the town.",
-    action: "kill",
-  },
-  doctor: {
-    alignment: "good",
-    description: "Can save one player per night from being killed.",
-    action: "heal",
-  },
-  detective: {
-    alignment: "good",
-    description: "Can investigate one player per night to learn their alignment.",
-    action: "investigate",
-  },
-  villager: {
-    alignment: "good",
-    description: "Has no special abilities. Wins if the mafia are eliminated.",
-    action: null,
-  },
-});
-
-/**
- * 🔄 Dynamically assigns roles to all players currently in the room.
- * - Automatically called whenever a player joins.
- * - Ensures fair distribution with at least one Mafia.
- * - Rebalances if new players join.
- */
-// server/game/roles.js
-// Simple, predictable role assignment for Mafia
-// - Always 1 Mafia if >= 1 players
-// - Add Detective if >= 3
-// - Add Doctor if >= 4
-// - Remaining are Villagers
-
-export function assignRoles(players) {
-  if (!Array.isArray(players) || players.length === 0) {
-    throw new Error("assignRoles: players array required");
-  }
-
-  // Reset roles before assigning
-  for (const p of players) p.role = null;
-
-  const count = players.length;
-
-  // Shuffle a shallow copy to avoid predictable roles by join order
-  const shuffled = [...players].sort(() => Math.random() - 0.5);
-
-  // Decide counts
-  let mafiaCount = 1; // minimum 1 Mafia for any size
-  if (count >= 7) mafiaCount = 2; // example scaling; tweak to your taste
-  if (count >= 10) mafiaCount = 3;
-
-  let detectiveCount = count >= 3 ? 1 : 0;
-  let doctorCount = count >= 4 ? 1 : 0;
-
-  // Assign Mafia
-  for (let i = 0; i < mafiaCount && shuffled.length; i++) {
-    const p = shuffled.shift();
-    p.role = "mafia";
-  }
-
-  // Assign Detective
-  for (let i = 0; i < detectiveCount && shuffled.length; i++) {
-    const p = shuffled.shift();
-    p.role = "detective";
-  }
-
-  // Assign Doctor
-  for (let i = 0; i < doctorCount && shuffled.length; i++) {
-    const p = shuffled.shift();
-    p.role = "doctor";
-  }
-
-  // Rest are Villagers
-  for (const p of shuffled) {
-    p.role = "villager";
-  }
+export function computeRoleCounts(playerCount) {
+  if (playerCount <= 8)  return { mafia: 1, detective: 1, doctor: 1 };
+  if (playerCount <= 11) return { mafia: 2, detective: 2, doctor: 1 };
+  if (playerCount <= 16) return { mafia: 3, detective: 2, doctor: 1 };
+  return { mafia: 4, detective: 3, doctor: 1 };
 }
 
+export const ROLE_INFO = Object.freeze({
+  mafia:     { alignment: "evil", description: "Works with other mafia to eliminate the town.", action: "kill" },
+  doctor:    { alignment: "good", description: "Can save one player per night from being killed.", action: "heal" },
+  detective: { alignment: "good", description: "Can investigate or shoot a target at night.", action: "investigate" },
+  villager:  { alignment: "good", description: "No special ability.", action: null },
+});
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
 
 /**
- * 🧠 Utility: Get info for a given role.
+ * Assign roles to the given array of player objects (in-place).
+ * Ensures the above distribution and fills the rest with villagers.
  */
-export const getRoleInfo = (role) => {
-  return ROLE_INFO[role] || {
-    alignment: "unknown",
-    description: "Unrecognized role.",
-    action: null,
-  };
+export function assignRoles(players) {
+  if (!Array.isArray(players) || players.length < 4) {
+    throw new Error("assignRoles: need at least 4 players");
+  }
+
+  // Reset any previous role
+  for (const p of players) p.role = null;
+
+  // Work on a shuffled copy to avoid predictability
+  const shuffled = [...players];
+  shuffle(shuffled);
+
+  const { mafia, detective, doctor } = computeRoleCounts(players.length);
+  const roles = [
+    ...Array(mafia).fill("mafia"),
+    ...Array(detective).fill("detective"),
+    ...Array(doctor).fill("doctor"),
+  ];
+  while (roles.length < players.length) roles.push("villager");
+  shuffle(roles);
+
+  // Apply roles back in the shuffled order
+  shuffled.forEach((p, i) => { p.role = roles[i]; });
+}
+
+export const getRoleInfo = (role) => ROLE_INFO[role] || {
+  alignment: "unknown",
+  description: "Unrecognized role.",
+  action: null,
 };

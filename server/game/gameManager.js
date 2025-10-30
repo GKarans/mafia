@@ -18,12 +18,16 @@ export default class GameManager {
     // Per-game / per-day
     this.dayCount = 0;          // increments when Day starts
     this.votes = {};
-    this.dayDetectiveUsed = false;            // voterId -> targetId|null
+    this.dayDetectiveUsed = false; // (kept if you need it elsewhere)
     this.nightState = {         // transient, recreated each night
       mafiaVotes: {},
       mafiaSelections: {},
       mafiaFinalTarget: null,
-      detectiveTarget: null,
+
+      detectiveVotes: {},
+      detectiveSelections: {},
+      detectiveFinalTarget: null,
+
       doctorTarget: null,
       doctorConfirmed: false,
       doctorSelfUsed: new Set(), // track self-saves per doctor
@@ -72,7 +76,7 @@ export default class GameManager {
     if (this.phase !== PHASES.LOBBY) return false;
 
     const arr = Array.from(this.players.values());
-    const min = this.config.minPlayers ?? 1; // allow 1 for testing; change to 4 for production
+    const min = this.config.minPlayers ?? 4; // require 4+ to play
     if (arr.length < min) return false;
 
     try {
@@ -105,7 +109,6 @@ export default class GameManager {
       p.alive = true;
       p.voteGhostUntilDay = null;
     }
-    this.dayDetectiveUsed = false;
     this.io.to(this.room).emit("phaseChange", { phase: this.phase });
   }
 
@@ -118,7 +121,11 @@ export default class GameManager {
       mafiaVotes: {},
       mafiaSelections: {},
       mafiaFinalTarget: null,
-      detectiveTarget: null,
+
+      detectiveVotes: {},
+      detectiveSelections: {},
+      detectiveFinalTarget: null,
+
       doctorTarget: null,
       doctorConfirmed: false,
       doctorSelfUsed: keepSelfUsed || new Set(),
@@ -137,7 +144,6 @@ export default class GameManager {
     }
 
     this.votes = {};
-    this.dayDetectiveUsed = false;
     this.dayDetectiveUsed = false;
     this.io.to(this.room).emit("phaseChange", { phase: this.phase });
   }
@@ -229,14 +235,8 @@ export default class GameManager {
       scores: Object.fromEntries(this.scores),
     });
 
-    // IMPORTANT: also tell clients the phase is END so the UI routes to results
-    this.dayDetectiveUsed = false;
     this.io.to(this.room).emit("phaseChange", { phase: this.phase });
-
-    // Winner modal payload (client already listens to this)
     this.io.to(this.room).emit("gameOver", { result, reveal });
-
-    // (Optional) log
     console.log(`🏁 Game over in ${this.room}: ${result}`);
   }
 
@@ -254,7 +254,11 @@ export default class GameManager {
       mafiaVotes: {},
       mafiaSelections: {},
       mafiaFinalTarget: null,
-      detectiveTarget: null,
+
+      detectiveVotes: {},
+      detectiveSelections: {},
+      detectiveFinalTarget: null,
+
       doctorTarget: null,
       doctorConfirmed: false,
       doctorSelfUsed: new Set(),
@@ -270,7 +274,6 @@ export default class GameManager {
       lastNightSaved: false,
       lastLynch: null,
     });
-    this.dayDetectiveUsed = false;
     this.io.to(this.room).emit("phaseChange", { phase: this.phase });
   }
 }
