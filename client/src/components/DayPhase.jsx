@@ -12,6 +12,8 @@ export default function DayPhase() {
     lastNightSaved = false,
     lastLynch = null,
     isHost = false,
+    detectiveMissed = false,
+    detectiveKilledMafia = false,
   } = state;
 
   return (
@@ -24,7 +26,7 @@ export default function DayPhase() {
         ☀️ Day Phase
       </motion.h2>
 
-      {/* Night results */}
+      {/* Night results: doctor save */}
       {lastNightSaved && (
         <div className="bg-green-900/50 border border-green-700 rounded-2xl p-3">
           <p className="text-sm">
@@ -33,8 +35,16 @@ export default function DayPhase() {
         </div>
       )}
 
-      {(
+      {/* Detective outcome banner (show exactly one when applicable) */}
+      {detectiveKilledMafia && (
         <div className="bg-green-900/50 border border-green-700 rounded-2xl p-3">
+          <p className="text-sm">
+            🔫 <span className="font-semibold">Detectiv killed mafia.</span>
+          </p>
+        </div>
+      )}
+      {!detectiveKilledMafia && detectiveMissed && (
+        <div className="bg-yellow-900/50 border border-yellow-700 rounded-2xl p-3">
           <p className="text-sm">
             🔫 <span className="font-semibold">Detectiv didnt shoot mafia.</span>
           </p>

@@ -460,9 +460,15 @@ async function runNightSequence(game, io) {
 
   const publicList = game.getPublicPlayers();
   const lastNightDeaths = summary.lastNightDeathsResolved || [];
+
+  // Detective outcome banner flags
+  const dTargetId = game.nightState.detectiveFinalTarget;
+  const dTarget = dTargetId ? game.players.get(dTargetId) : null;
+  const detectiveKilledMafia = !!(dTarget && dTarget.role === "mafia");
+  const detectiveMissed = !!(dTargetId && !detectiveKilledMafia);
+
   const lastNightSaved = !!summary.protected; // protected = saved player name or null
   const lastNightSavedName = summary.protected || null;
-  const detectiveMissed = false;
 
   io.to(game.room).emit("state:update", {
     players: publicList,
@@ -470,6 +476,7 @@ async function runNightSequence(game, io) {
     lastNightSaved,
     lastNightSavedName,
     detectiveMissed,
+    detectiveKilledMafia,
     dayResolved: false,
     night: { mafiaSelections: {}, mafiaFinalTarget: null, detectivePeek: null, detectiveRevealWindow: null },
     nightTurn: null,
